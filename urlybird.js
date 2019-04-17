@@ -1,3 +1,5 @@
+const REFERRER = document.referrer;
+
 const POINT_LOOKUPS = [
 	[0, 0], // 1 4
 	[1, 0], // 2 5
@@ -47,16 +49,13 @@ class BrixelScreen {
 
 	draw (arr) {
 		this.arr = arr;
-		this.display();
-	}
 
-	display () {
 		let display = '';
 
 		for (let b_idx = 0; b_idx < this.num_brixels; b_idx++) {
 			display += this.brixel(b_idx);
 		}
-		location.hash = display;
+		return display;
 	}
 }
 
@@ -64,11 +63,7 @@ const GAME_X = 40;
 
 class Game {
 	constructor () {
-		this.jumping = 0;
-		this.x_progress = 0;
 		this.min_interval = 7;
-		this.time_since_last_hurdle = 1000;
-		this.space_further_apart = false;
 
 		this.HURDLES = [
 			[1,0,0,1],
@@ -78,9 +73,27 @@ class Game {
 		]
 		
 		this.jump_heights = [0,0,1,2,3,3,3,2,1]; // first two are discarded
-
-		this.grid = new Array(GAME_X * Y_DIM).fill(false);
 		this.screen = new BrixelScreen(GAME_X);
+		this.init();
+	}
+
+	init () {
+		this.jumping = 0;
+		this.x_progress = -39;
+		this.time_since_last_hurdle = 1000;
+		this.spacing_modifier = 0; // -1: closer, 1: further, 0: normal
+		this.lost = false;
+		this.displayed_loss = false;
+		this.grid = new Array(GAME_X * Y_DIM).fill(false);
+	}
+
+	input () {
+		if (!this.lost) {
+			this.jump();
+			return;
+		}
+
+		this.init();
 	}
 
 	jump () {
@@ -89,6 +102,14 @@ class Game {
 	}
 
 	step () {
+		if (this.lost) {
+			if (!this.displayed_loss) {
+				location.hash += `Score:⠀${this.x_progress}⠀-⠀Press⠀any⠀key⠀to⠀play⠀again`; // using U+2800 - can't have whitespace in hashes
+				this.displayed_loss = true;
+			}
+			return
+		};
+
 		if (this.jumping) {
 			this.jumping++;
 			if (this.jumping >= this.jump_heights.length) this.jumping = 0;
@@ -99,15 +120,18 @@ class Game {
 		this.move_grid();
 		
 		var grid_with_player = this.grid.slice();
-		var player_y = 3 - (this.jumping ? this.jump_heights[this.jumping] : 0);
-		grid_with_player[player_y * GAME_X] = true;
+		grid_with_player[this.player_loc()] = true;
 
-		this.screen.draw(grid_with_player)
+		location.hash = this.screen.draw(grid_with_player)
 	}
 
 	player_y () {
 		if (this.jumping === 0) return 0;
 		return this.jump_heights[this.jumping];
+	}
+
+	player_loc () {
+		return (3 - this.player_y()) * GAME_X;
 	}
 
 	move_grid () {
@@ -117,13 +141,17 @@ class Game {
 			}
 		}
 
-		// collision detection goes here later
-
+		if (this.grid[this.player_loc()]) {
+			this.lost = true;
+			return;
+		}
 
 		this.x_progress++;
+		
 		// now, do we want to generate a new hurdle? let's see if we *don't*
-		if ((this.time_since_last_hurdle < this.min_interval + Math.random() * 5) ||
-		    (this.space_further_apart && this.time_since_last_hurdle < this.jump.length * 2)) {
+		if ((this.spacing_modifier === -1 && this.time_since_last_hurdle < this.min_interval - 1 + Math.random() * 4) ||
+			(this.spacing_modifier ===  0 && this.time_since_last_hurdle < this.min_interval     + Math.random() * 5) ||
+		    (this.spacing_modifier ===  1 && this.time_since_last_hurdle < this.jump_heights.length * 2)) {
 			this.grid[    GAME_X - 1] = false;
 			this.grid[2 * GAME_X - 1] = false;
 			this.grid[3 * GAME_X - 1] = false;
@@ -131,13 +159,12 @@ class Game {
 			return;
 		}
 
-		this.space_further_apart = (this.time_since_last_hurdle < this.jump.length); // try to avoid unwinnable patterns!
 		this.time_since_last_hurdle = 0;
 
-		let dice_roll = Math.floor(Math.random() * 6 + Math.random() * 6 + Math.random() * 6)
-		let hurdle = this.HURDLES[Math.round(dice_roll / 6)];
-		if (hurdle == 0 || hurdle == 3) this.space_further_apart = true;
-		console.log(Math.round(dice_roll / 6));
+		let dice_roll = Math.floor(Math.random() * 6 + Math.random() * 6 + Math.random() * 6 + Math.random() * 6)
+		let hurdle = this.HURDLES[Math.round(dice_roll / 6) - 1];
+
+		this.spacing_modifier = [1, -1, 0, 1][Math.round(dice_roll / 6)];
 
 		this.grid[    GAME_X - 1] = hurdle[0];
 		this.grid[2 * GAME_X - 1] = hurdle[1];

@@ -1,5 +1,3 @@
-const REFERRER = document.referrer;
-
 const POINT_LOOKUPS = [
 	[0, 0], // 1 4
 	[1, 0], // 2 5

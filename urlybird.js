@@ -58,14 +58,34 @@ class BrixelScreen {
 }
 
 const GAME_X = 40;
-const HURDLES = [
-	[1,0,0,1],
-	[0,0,0,1],
-	[0,0,1,1],
-	[0,1,1,1]
+const HURDLES = [ // should have one column of blank space between the components, otherwise it looks janky
+	{ before: 0, after: 0, odds: 4, shape: [[0,0,0,1]] },
+	{ before: 0, after: 0, odds: 5, shape: [[0,0,1,1]] },
+	{ before: 2, after: 1, odds: 3, shape: [[0,1,1,1]] },
+	{ before: 1, after: 2, odds: 1, shape: [[1,0,0,1]] },
+	{ before: 0, after: 2, odds: 2, shape: [[0,0,1,1],[0,0,0,0],[0,0,1,1]] },
+	{ before: 5, after: 5, odds: 2, shape: [[0,0,0,1],[0,0,0,0],[1,0,0,0],[0,0,0,0],[0,0,0,1]] },
 ]
-const HURDLE_SPACING = [2, -1, 0, 1];
 const JUMP_HEIGHTS = [0,1,2,3,3,3,2,1];
+
+// compute the actual odds
+let total_odds = 0;
+for (let h of HURDLES) {
+	total_odds += h.odds;
+}
+let cumulative_odds = 0;
+for (let h of HURDLES) {
+	cumulative_odds += (h.odds / total_odds);
+	h.odds = cumulative_odds;
+}
+function roll_hurdle() {
+	const roll = Math.random();
+	for (let h_idx = 0; h_idx < HURDLES.length; h_idx++) {
+		if (roll < HURDLES[h_idx].odds) {
+			return h_idx;
+		}
+	}
+}
 
 class Game {
 	constructor () {
@@ -82,8 +102,10 @@ class Game {
 		this.time_since_last_hurdle = 1000;
 		this.last_hurdle = 2; // good enough default, don't want to handle none
 		this.lost = false;
+		this.time_since_lost = 0; // don't mash out of the score screen
 		this.displayed_loss = false;
 		this.grid = new Array(GAME_X * Y_DIM).fill(false);
+		this.next_hurdle = null;
 	}
 
 	input () {
@@ -92,6 +114,7 @@ class Game {
 			return;
 		}
 
+		if (this.time_since_lost < 3) return;
 		this.init();
 	}
 
@@ -102,8 +125,11 @@ class Game {
 
 	step () {
 		if (this.lost) {
+			this.time_since_lost++;
 			if (!this.displayed_loss) {
 				location.hash += `Score:⠀${this.x_progress}⠀-⠀Press⠀any⠀key⠀to⠀play⠀again`; // using U+2800 - can't have whitespace in hashes
+				let scoreEl = document.getElementById('highscore')
+				if (this.x_progress > +(scoreEl.innerText)) scoreEl.innerText = this.x_progress;
 				this.displayed_loss = true;
 			}
 			return
@@ -136,6 +162,33 @@ class Game {
 		return (3 - this.player_y()) * GAME_X;
 	}
 
+	add_hurdle(hurdle) {
+		this.time_since_last_hurdle = 0;
+		this.last_hurdle = hurdle;
+		this.next_hurdle = false;
+		this.add_column(HURDLES[this.last_hurdle], 0);
+	}
+
+	add_column(hurdle, idx) {
+		this.grid[    GAME_X - 1] = hurdle.shape[idx][0];
+		this.grid[2 * GAME_X - 1] = hurdle.shape[idx][1];
+		this.grid[3 * GAME_X - 1] = hurdle.shape[idx][2];
+		this.grid[4 * GAME_X - 1] = hurdle.shape[idx][3]; 	
+	}
+
+	add_blank_col() {
+		this.grid[    GAME_X - 1] = false;
+		this.grid[2 * GAME_X - 1] = false;
+		this.grid[3 * GAME_X - 1] = false;
+		this.grid[4 * GAME_X - 1] = false;
+	}
+
+	can_place_hurdle(hurdle = null) {
+		let hurdle_before = (hurdle === null) ? 0 : HURDLES[hurdle].before; 
+		let res = this.time_since_last_hurdle - (this.min_interval + HURDLES[this.last_hurdle].after + HURDLES[hurdle].before);
+		return res > 0;
+	}
+
 	move_grid () {
 		for (let x = 0; x < GAME_X - 1; x++) {
 			for (let y = 0; y < Y_DIM; y++) {
@@ -149,43 +202,45 @@ class Game {
 		}
 
 		this.x_progress++;
+
+		// if we just placed the first part of a hurdle, place the second part
+		if (this.time_since_last_hurdle < HURDLES[this.last_hurdle].shape.length) {
+			this.add_column(HURDLES[this.last_hurdle], this.time_since_last_hurdle);
+			return;
+		}
+		// if we scheduled a hurdle to be placed, see if we should place it
+		if (this.next_hurdle) {
+			if (this.can_place_hurdle(this.next_hurdle)) {
+				this.add_hurdle(this.next_hurdle);
+			} else {
+				this.add_blank_col();
+			}
+			return;
+		}
 		
 		// now, do we want to generate a new hurdle? let's see if we *don't*
 		let roll = 0;
 		let roll_tmp = .5;
-		for (var i = 0; i < this.time_since_last_hurdle - this.min_interval - HURDLE_SPACING[this.last_hurdle]; i++) {
+		for (var i = 0; i < this.time_since_last_hurdle - this.min_interval; i++) {
 			roll += roll_tmp;
 			roll_tmp /= 1.5;
 		}
 		roll /= 1.5;
 		if (Math.random() > roll) {
-			this.grid[    GAME_X - 1] = false;
-			this.grid[2 * GAME_X - 1] = false;
-			this.grid[3 * GAME_X - 1] = false;
-			this.grid[4 * GAME_X - 1] = false;
+			this.add_blank_col();
 			return;
 		}
 
-		this.time_since_last_hurdle = 0;
-
-		let hroll = Math.random();
-		let rolled_hurdle = 3;
-		if (hroll < 0.25) {
-			rolled_hurdle = 0;
-		} else if (hroll < 0.5) {
-			rolled_hurdle = 1;
-		} else if (hroll < 0.75) {
-			rolled_hurdle = 2;
-		} 
+		let rolled_hurdle = roll_hurdle();
 		let hurdle = HURDLES[rolled_hurdle];
-		this.last_hurdle = rolled_hurdle;
 
-		this.spacing_modifier = HURDLE_SPACING[rolled_hurdle];
+		if (!this.can_place_hurdle(rolled_hurdle)) {
+			this.next_hurdle = rolled_hurdle;
+			this.add_blank_col();
+			return;
+		}
 
-		this.grid[    GAME_X - 1] = hurdle[0];
-		this.grid[2 * GAME_X - 1] = hurdle[1];
-		this.grid[3 * GAME_X - 1] = hurdle[2];
-		this.grid[4 * GAME_X - 1] = hurdle[3]; 
+		this.add_hurdle(rolled_hurdle);
 	}
 }
 
